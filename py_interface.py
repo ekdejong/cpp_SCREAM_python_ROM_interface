@@ -1,3 +1,22 @@
+import math
+import numpy as np
+import sys
+
+# CONSTANTS
+# radius bins
+NUMBIN = 64
+NUMEDG = NUMBIN + 1
+EDGR = 5e-3                    # unit: m
+EDGL = 1e-6                    # unit: m
+R_EDG = np.exp(np.linspace(np.log(EDGL), np.log(EDGR), NUMEDG)) 
+
+RHOW = 1000.0   # liquid water density, unit: kg/m3
+
+### flags controlling plotting
+make_plot_c     = False
+make_plot_r     = True
+make_plot_total = True
+
 def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
     """
     Description: A python interface that links to SDM python.
@@ -19,18 +38,7 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
     nr_tend_out: time rate of change of raindrop number due to collision-coalescence for a given time step, 1/m3/s
     """
 
-    import math
-    import numpy as np
-    import sys
     import py_SDM
-
-    rhow = 1000.0   # liquid water density, unit: kg/m3
-
-    ### flags controlling plotting
-    make_plot_c     = False
-    make_plot_r     = True
-    make_plot_total = True
-    
 
     ### a scalar
     Nc = nc_in
@@ -42,59 +50,45 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
     mur= mur_in
     
     ### convert bulk aggregated properties to bin necessary for SDM calculations
-    
-    ### create bin
-    # bin, edge number
-    numbin = 80
-    numedg = 80 + 1
 
-    # bin edge mass, size
-    q_edg  = np.zeros((numedg))    # unit: mg
-    r_edg  = np.zeros((numedg))    # unit: um
-    
-    # bin width
-    lSCAL  = 2.0                  # controlling grid mesh resolution
-    lalpha = 2.0                  # mass doubling (2), tripling (3), quadrupling (4), etc. every lscal bin(s)
-    ax     = lalpha**(1.0/lSCAL)  # bin discretization
+    q_edg  = np.zeros((NUMEDG))    # unit: mg
 
     # fill in each bin
     mass_min = 1e-9               # unit: mg
     
-    for ii in range(numedg):
+    for ii in range(NUMEDG):
         # 1st bin
         if ii == 0:
             q_edg[ii] = mass_min*0.5*(ax+1.)                               # unit: mg
-            r_edg[ii] = 1000.*np.exp(np.log(3.0*q_edg[ii]/(4.0*np.pi))/3.0)  # unit: um
+            # R_EDG[ii] = 1000.*np.exp(np.log(3.0*q_edg[ii]/(4.0*np.pi))/3.0)  # unit: um
         # 2nd bin and beyond
         else:
             q_edg[ii] = q_edg[ii-1] * ax
-            r_edg[ii] = 1000.*np.exp(np.log(3.0*q_edg[ii]/(4.0*np.pi))/3.0)
+            # R_EDG[ii] = 1000.*np.exp(np.log(3.0*q_edg[ii]/(4.0*np.pi))/3.0)
 
     # bin center mass, size
-    q_cen = np.zeros((numbin))    # unit: mg
-    r_cen = np.zeros((numbin))    # unit: um
-    D_cen = np.zeros((numbin))    # unit: meter
-    deltad= np.zeros((numbin))    # unit: meter
+    q_cen = np.zeros((NUMBIN))    # unit: mg
+    r_cen = np.zeros((NUMBIN))    # unit: um
+    D_cen = np.zeros((NUMBIN))    # unit: meter
+    deltad= np.zeros((NUMBIN))    # unit: meter
 
     q_cen[:] = ((q_edg + np.roll(q_edg, 1))/2.0)[1:]
     r_cen[:] = 1000.*np.exp(np.log(3.0*q_cen[:]/(4.0*np.pi))/3.0)
     D_cen[:] = r_cen[:]*2.0*1e-6  # diameter
-    deltad[:]= (r_edg - np.roll(r_edg,1))[1:] *2.0*1e-6
+    deltad[:]= (R_EDG - np.roll(R_EDG,1))[1:] *2.0*1e-6
 
     ### assumed gamma size distribution
     lambdac = 0.0
     N0c     = 0.0
     lambdar = 0.0
     N0r     = 0.0
-    gamma_psdc_bin = np.zeros((numbin))
-    gamma_psdr_bin = np.zeros((numbin))
-    NDdD_bin       = np.zeros((numbin))
-    MDdD_bin       = np.zeros((numbin))
+    gamma_psdc_bin = np.zeros((NUMBIN))
+    gamma_psdr_bin = np.zeros((NUMBIN))
+    NDdD_bin       = np.zeros((NUMBIN))
+    MDdD_bin       = np.zeros((NUMBIN))
 
     if qc_in > qsmall:
-        lambdac = (np.pi*rhow*Nc*math.gamma(muc+4)/(6.0*Qc*math.gamma(muc+1)))**(1.0/3.0)                # unit: meter -1
-        #lambdac = np.max([(muc+1.)*2.5e4,np.min([lambdac,(muc+1.)*1.0e6])])
-        N0c     = Nc*lambdac**(muc+1)/math.gamma(muc+1)   # unit: m^(-u-4)
+        (N0c, lambdac) = get_gamma_params(Nc, Qc, muc)
         print('cloud liquid N0, lambda= ', N0c, lambdac)
     
         gamma_psdc_bin[:] = N0c*(D_cen[:]**muc)*np.exp(-lambdac*D_cen[:])   # unit: m-4
@@ -117,7 +111,7 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
 
             gamma_psdc   = N0c*(centerdd[:]**muc)*np.exp(-lambdac*centerdd[:])      # unit: m-4-u
             dum_NDdDc    = gamma_psdc[:]*deltadd[:]                                 # unit: m-3
-            dum_massDc   = dum_NDdDc[:]*(np.pi/6.0*centerdd[:]**3*rhow)             # unit: kg/m3. Assumption: spherical
+            dum_massDc   = dum_NDdDc[:]*(np.pi/6.0*centerdd[:]**3*RHOW)             # unit: kg/m3. Assumption: spherical
 
             # line number and mass (true value)
             v,lr_left = find_nearest(centerdd,D_cen[0])
@@ -180,9 +174,10 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
 
 
     if qr_in > qsmall:
-        lambdar = (np.pi*rhow*Nr*math.gamma(mur+4)/(6.0*Qr*math.gamma(mur+1)))**(1.0/3.0)                # unit: meter -1
-        #lambdar = np.max([1./0.005,np.min([lambdar,1.0e5])])
-        N0r     = Nr*lambdar**(mur+1)/math.gamma(mur+1)   # unit: m^(-u-4)
+        # lambdar = (np.pi*RHOW*Nr*math.gamma(mur+4)/(6.0*Qr*math.gamma(mur+1)))**(1.0/3.0)                # unit: meter -1
+        # #lambdar = np.max([1./0.005,np.min([lambdar,1.0e5])])
+        # N0r     = Nr*lambdar**(mur+1)/math.gamma(mur+1)   # unit: m^(-u-4)
+        (N0r, lambdar) = get_gamma_params(Nr, Qr, mur)
         print('rain N0r, lambda= ', N0r, lambdar)
         
         gamma_psdr_bin[:] = N0r*(D_cen[:]**mur)*np.exp(-lambdar*D_cen[:])   # unit: m-4
@@ -205,7 +200,7 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
 
             gamma_psdr   = N0r*(centerdd[:]**mur)*np.exp(-lambdar*centerdd[:])      # unit: m-4-u
             dum_NDdDr    = gamma_psdr[:]*deltadd[:]                                 # unit: m-3
-            dum_massDr   = dum_NDdDr[:]*(np.pi/6.0*centerdd[:]**3*rhow)             # unit: kg/m3. Assumption: spherical
+            dum_massDr   = dum_NDdDr[:]*(np.pi/6.0*centerdd[:]**3*RHOW)             # unit: kg/m3. Assumption: spherical
 
             # line number and mass (true value)
             v,lr_left = find_nearest(centerdd,D_cen[0])
@@ -287,11 +282,11 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
 
             gamma_psdc   = N0c*(centerdd[:]**muc)*np.exp(-lambdac*centerdd[:])      # unit: m-4-u
             dum_NDdDc    = gamma_psdc[:]*deltadd[:]                                 # unit: m-3
-            dum_massDc   = dum_NDdDc[:]*(np.pi/6.0*centerdd[:]**3*rhow)             # unit: kg/m3. Assumption: spherical
+            dum_massDc   = dum_NDdDc[:]*(np.pi/6.0*centerdd[:]**3*RHOW)             # unit: kg/m3. Assumption: spherical
 
             gamma_psdr   = N0r*(centerdd[:]**mur)*np.exp(-lambdar*centerdd[:])      # unit: m-4-u
             dum_NDdDr    = gamma_psdr[:]*deltadd[:]                                 # unit: m-3
-            dum_massDr   = dum_NDdDr[:]*(np.pi/6.0*centerdd[:]**3*rhow)             # unit: kg/m3. Assumption: spherical
+            dum_massDr   = dum_NDdDr[:]*(np.pi/6.0*centerdd[:]**3*RHOW)             # unit: kg/m3. Assumption: spherical
 
             # line number and mass (true value)
             v,lr_left = find_nearest(centerdd,D_cen[0])
@@ -345,7 +340,7 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
         #####################################################################
         ### call SDM emulator function, pass in "initial" PSD, return new PSD after the collision-coalescence processes with a timte step = 100 sec
         dt = 100.0                                             # unit: sec
-        new_MDdD_bin, new_NDdD_bin = py_SDM.compute_coll_SDM(numbin, dt, MDdD_bin[:], NDdD_bin[:])
+        new_MDdD_bin, new_NDdD_bin = py_SDM.compute_coll_SDM(NUMBIN, dt, MDdD_bin[:], NDdD_bin[:])
         #####################################################################
     
         ### derive tendencies
@@ -359,20 +354,20 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
         cld_dsd_maf  = np.sum(new_MDdD_bin[0:cutoff_idx+1])
         
         ### rain
-        rain_dsd_nbf = np.sum(NDdD_bin[cutoff_idx+1:numbin])
-        #rain_dsd_nbf = np.sum(MDdD_bin[cutoff_idx+1:numbin]/(q_edg[cutoff_idx+1:numbin] * 1e-6))
-        rain_dsd_mbf = np.sum(MDdD_bin[cutoff_idx+1:numbin])
+        rain_dsd_nbf = np.sum(NDdD_bin[cutoff_idx+1:NUMBIN])
+        #rain_dsd_nbf = np.sum(MDdD_bin[cutoff_idx+1:NUMBIN]/(q_edg[cutoff_idx+1:NUMBIN] * 1e-6))
+        rain_dsd_mbf = np.sum(MDdD_bin[cutoff_idx+1:NUMBIN])
     
-        rain_dsd_naf = np.sum(new_NDdD_bin[cutoff_idx+1:numbin])
-        #rain_dsd_naf =  np.sum(new_MDdD_bin[cutoff_idx+1:numbin]/(q_edg[cutoff_idx+1:numbin] * 1e-6))
-        rain_dsd_maf = np.sum(new_MDdD_bin[cutoff_idx+1:numbin])
+        rain_dsd_naf = np.sum(new_NDdD_bin[cutoff_idx+1:NUMBIN])
+        #rain_dsd_naf =  np.sum(new_MDdD_bin[cutoff_idx+1:NUMBIN]/(q_edg[cutoff_idx+1:NUMBIN] * 1e-6))
+        rain_dsd_maf = np.sum(new_MDdD_bin[cutoff_idx+1:NUMBIN])
     
         ### total liquid for mass conservation test
-        nliqtotbf = np.sum(NDdD_bin[0:numbin])
-        qliqtotbf = np.sum(MDdD_bin[0:numbin])
+        nliqtotbf = np.sum(NDdD_bin[0:NUMBIN])
+        qliqtotbf = np.sum(MDdD_bin[0:NUMBIN])
     
-        nliqtotaft= np.sum(new_NDdD_bin[0:numbin])
-        qliqtotaft= np.sum(new_MDdD_bin[0:numbin])
+        nliqtotaft= np.sum(new_NDdD_bin[0:NUMBIN])
+        qliqtotaft= np.sum(new_MDdD_bin[0:NUMBIN])
 
         if (((qliqtotaft - qliqtotbf)/qliqtotbf) < 1e-10):
             pass
@@ -406,3 +401,9 @@ def find_nearest(array, value):
     import numpy as np
     idx = (np.abs(array - value)).argmin()
     return array[idx], idx
+
+def get_gamma_params(Nt, qt, mu, rho_air = 1.0):
+    gamma_ratio = math.gamma(mu + 4) / math.gamma(mu + 1)
+    lambda0 = (np.pi / 6 * RHOW * Nt * gamma_ratio / (qt * rho_air))**(1.0/3.0)  # unit: meter -1
+    N0      = Nt*lambda0**(mu+1)/math.gamma(mu+1)   # unit: m^(-mu-4)
+    return (N0, lambda0)
