@@ -1,6 +1,12 @@
 import math
 import numpy as np
 import sys
+import py_SDM
+from scipy.integrate import quad
+
+def find_nearest(array, value):
+    idx = (np.abs(array - value)).argmin()
+    return array[idx], idx
 
 # CONSTANTS
 # radius bins
@@ -8,13 +14,16 @@ NUMBIN = 64
 NUMEDG = NUMBIN + 1
 EDGR = 5e-3                    # unit: m
 EDGL = 1e-6                    # unit: m
-R_EDG = np.exp(np.linspace(np.log(EDGL), np.log(EDGR), NUMEDG)) 
+R_EDG = np.exp(np.linspace(np.log(EDGL), np.log(EDGR), NUMEDG))
+DLNR = (np.log(EDGR) - np.log(EDGL)) / NUMEDG
 
 RHOW = 1000.0   # liquid water density, unit: kg/m3
+### determine cloud liquid and rain cutoff size
+### for simplicity, use a fixed radius threshold of 40 um to differentiate raindrops from cloud droplets for now (reference to 40 um: Gettelman et al 2021 JAMES; Geoffroy et al., 2014 ACP; Azimi et al. 2024 JAMES: 50um radius)
+val,cutoff_idx = find_nearest(R_EDG, 40 * 1.e-6)
+print('cutoff: ', val, ' ', cutoff_idx)
 
 ### flags controlling plotting
-make_plot_c     = False
-make_plot_r     = True
 make_plot_total = True
 
 def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
@@ -38,8 +47,6 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
     nr_tend_out: time rate of change of raindrop number due to collision-coalescence for a given time step, 1/m3/s
     """
 
-    import py_SDM
-
     ### a scalar
     Nc = nc_in
     Qc = qc_in
@@ -50,248 +57,61 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
     mur= mur_in
     
     ### convert bulk aggregated properties to bin necessary for SDM calculations
-
-    q_edg  = np.zeros((NUMEDG))    # unit: mg
-
-    # fill in each bin
-    mass_min = 1e-9               # unit: mg
-    
-    for ii in range(NUMEDG):
-        # 1st bin
-        if ii == 0:
-            q_edg[ii] = mass_min*0.5*(ax+1.)                               # unit: mg
-            # R_EDG[ii] = 1000.*np.exp(np.log(3.0*q_edg[ii]/(4.0*np.pi))/3.0)  # unit: um
-        # 2nd bin and beyond
-        else:
-            q_edg[ii] = q_edg[ii-1] * ax
-            # R_EDG[ii] = 1000.*np.exp(np.log(3.0*q_edg[ii]/(4.0*np.pi))/3.0)
-
-    # bin center mass, size
-    q_cen = np.zeros((NUMBIN))    # unit: mg
-    r_cen = np.zeros((NUMBIN))    # unit: um
-    D_cen = np.zeros((NUMBIN))    # unit: meter
-    deltad= np.zeros((NUMBIN))    # unit: meter
-
-    q_cen[:] = ((q_edg + np.roll(q_edg, 1))/2.0)[1:]
-    r_cen[:] = 1000.*np.exp(np.log(3.0*q_cen[:]/(4.0*np.pi))/3.0)
-    D_cen[:] = r_cen[:]*2.0*1e-6  # diameter
-    deltad[:]= (R_EDG - np.roll(R_EDG,1))[1:] *2.0*1e-6
-
     ### assumed gamma size distribution
     lambdac = 0.0
     N0c     = 0.0
     lambdar = 0.0
     N0r     = 0.0
-    gamma_psdc_bin = np.zeros((NUMBIN))
-    gamma_psdr_bin = np.zeros((NUMBIN))
-    NDdD_bin       = np.zeros((NUMBIN))
-    MDdD_bin       = np.zeros((NUMBIN))
+    dndlnr_bin     = np.zeros((NUMBIN))
+    dmdlnr_bin     = np.zeros((NUMBIN))
 
     if qc_in > qsmall:
         (N0c, lambdac) = get_gamma_params(Nc, Qc, muc)
         print('cloud liquid N0, lambda= ', N0c, lambdac)
-    
-        gamma_psdc_bin[:] = N0c*(D_cen[:]**muc)*np.exp(-lambdac*D_cen[:])   # unit: m-4
-
-        ####################################################################
-        if make_plot_c:
-            import matplotlib.pyplot as plt
-            import matplotlib.gridspec as gridspec
-            
-            ### bin
-            dum_NDdD_bin = gamma_psdc_bin[:]*deltad[:]        # unit: m-3
-            dum_MDdD_bin = dum_NDdD_bin[:]*q_cen[:]*1e-6      # unit:kg m-3
-
-            ### gamma PSD
-            powlaw_coeff = np.linspace(start=-9,stop=-1,num=100,endpoint=True)
-            dd           = 10.0**powlaw_coeff 
-
-            deltadd = (dd - np.roll(dd,1))[1:]
-            centerdd= ((dd + np.roll(dd,1))/2.0)[1:]
-
-            gamma_psdc   = N0c*(centerdd[:]**muc)*np.exp(-lambdac*centerdd[:])      # unit: m-4-u
-            dum_NDdDc    = gamma_psdc[:]*deltadd[:]                                 # unit: m-3
-            dum_massDc   = dum_NDdDc[:]*(np.pi/6.0*centerdd[:]**3*RHOW)             # unit: kg/m3. Assumption: spherical
-
-            # line number and mass (true value)
-            v,lr_left = find_nearest(centerdd,D_cen[0])
-            v,lr_righ = find_nearest(centerdd,D_cen[-1])
-            
-            total_nl = np.sum(dum_NDdDc[lr_left:lr_righ+1])*1.0e-6  # unit: cm-3
-            total_ml = np.sum(dum_massDc[lr_left:lr_righ+1])*1.0e-3 # unit: g cm-3
-            
-            # bin number and mass 
-            total_nl_bin = np.sum(dum_NDdD_bin*1.0e-6)
-            total_ml_bin = np.sum(dum_MDdD_bin*1.0e-3)
-            
-            dpi = 300
-            fig = plt.figure(figsize=(1800/dpi,1200/dpi), dpi=dpi) ##,constrained_layout=True)
-            spec= gridspec.GridSpec(ncols=2, nrows=2,figure=fig,left=0.1, bottom=0.1,right=0.95,top=0.95)
-            spec.update(wspace=0.4,hspace=0.45)
-            
-            ax = []
-
-            ax.append(fig.add_subplot(spec[0, 0]))
-            # ax[-1].set_ylim(0,20)
-            ax[-1].set_yscale('linear')
-            ax[-1].set_ylabel('Number [cm$^{-3}$]',fontsize=10)
-            ax[-1].set_xscale('log')
-            #ax[-1].set_xlim(1.0e-10,1.0e4)
-            ax[-1].set_xlabel('Diameter [\u03bcm]', fontsize=10)
-            ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
-            ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
-            ax[-1].plot(centerdd*1.0e6,dum_NDdDc*1.0e-6,alpha=0.8,lw=1,linestyle='-',c='k',)
-            ax[-1].bar(D_cen*1.0e6,dum_NDdD_bin*1.0e-6,width=deltad*1.0e6,edgecolor='k',linewidth=0.5)
-            ax[-1].axvline(x=D_cen[0]*1.0e6, ymin=-10, ymax=1.0e2,linestyle=':',lw=1,color='grey')
-            ax[-1].axvline(x=D_cen[-1]*1.0e6, ymin=-10, ymax=1.0e2,linestyle=':',lw=1,color='grey')
-            ax[-1].text(0.1,0.9,'Given total Nc: '+str("{:.2e}".format(Nc*1.0e-6))+'cm$^{-3}$',fontsize=6,transform = ax[-1].transAxes)
-            ax[-1].text(0.1,0.8,'sum total gamma Nc: '+str("{:.2e}".format(total_nl))+'cm$^{-3}$',fontsize=6,transform = ax[-1].transAxes)
-            ax[-1].text(0.1,0.7,'sum total bin Nc: '+str("{:.2e}".format(total_nl_bin))+'cm$^{-3}$',fontsize=6,transform = ax[-1].transAxes)
-            ax[-1].text(0.1,0.6,'RelDiff: '+str("{:.2f}".format(abs(Nc*1.0e-6-total_nl_bin)/(Nc*1.0e-6)*100.))+'%',fontsize=6,transform = ax[-1].transAxes)
-
-
-            ax.append(fig.add_subplot(spec[1, 0]))
-            # ax[-1].set_ylim(0,20.0e-8)
-            ax[-1].set_yscale('linear')
-            ax[-1].set_ylabel('Mass [g cm$^{-3}$]',fontsize=10)
-            ax[-1].set_xscale('log')
-            #ax[-1].set_xlim(1.0e-10,1.0e4)
-            ax[-1].set_xlabel('Diameter [\u03bcm]', fontsize=10)
-            ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
-            ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
-            ax[-1].plot(centerdd*1.0e6,dum_massDc*1.0e-3,alpha=0.8,lw=1,linestyle='-',c='k',)
-            ax[-1].bar(D_cen*1.0e6,dum_MDdD_bin*1.0e-3,width=deltad*1.0e6,edgecolor='k',linewidth=0.5)
-            ax[-1].axvline(x=D_cen[0]*1.0e6, ymin=-10, ymax=1.0e2,linestyle=':',lw=1,color='grey')
-            ax[-1].axvline(x=D_cen[-1]*1.0e6, ymin=-10, ymax=1.0e2,linestyle=':',lw=1,color='grey')
-            ax[-1].text(0.1,0.9,'Given total mc: '+str("{:.2e}".format(Qc*1.0e-3))+'g cm$^{-3}$',fontsize=6,transform = ax[-1].transAxes)
-            ax[-1].text(0.1,0.8,'sum total gamma mc: '+str("{:.2e}".format(total_ml))+'g cm$^{-3}$',fontsize=6,transform = ax[-1].transAxes)
-            ax[-1].text(0.1,0.7,'sum total bin mc: '+str("{:.2e}".format(total_ml_bin))+'g cm$^{-3}$',fontsize=6,transform = ax[-1].transAxes)
-            ax[-1].text(0.1,0.6,'RelDiff: '+str("{:.2f}".format(abs(Qc*1.0e-3-total_ml_bin)/(Qc*1.0e-3)*100.))+'%',fontsize=6,transform = ax[-1].transAxes)
-
-            plt.savefig('PSDc_comparison.png')
-            plt.close()
-        ####################################################################
-
+        for i in range(NUMBIN):
+            n_cloud, _ = quad(lambda D: gamma_distribution(D, N0c, lambdac, muc),
+                        R_EDG[i]*2, R_EDG[i+1]*2)
+            m_cloud, _ = quad(lambda D: np.pi/6 * RHOW * D**3 * 
+                                    gamma_distribution(D, N0c, lambdac, muc),
+                                    R_EDG[i]*2, R_EDG[i+1]*2)
+            dndlnr_bin[i] += n_cloud / DLNR
+            dmdlnr_bin[i] += m_cloud / DLNR
 
     if qr_in > qsmall:
-        # lambdar = (np.pi*RHOW*Nr*math.gamma(mur+4)/(6.0*Qr*math.gamma(mur+1)))**(1.0/3.0)                # unit: meter -1
-        # #lambdar = np.max([1./0.005,np.min([lambdar,1.0e5])])
-        # N0r     = Nr*lambdar**(mur+1)/math.gamma(mur+1)   # unit: m^(-u-4)
         (N0r, lambdar) = get_gamma_params(Nr, Qr, mur)
         print('rain N0r, lambda= ', N0r, lambdar)
-        
-        gamma_psdr_bin[:] = N0r*(D_cen[:]**mur)*np.exp(-lambdar*D_cen[:])   # unit: m-4
+        for i in range(NUMBIN):
+            n_rain, _ = quad(lambda D: gamma_distribution(D, N0r, lambdar, mur),
+                        R_EDG[i]*2, R_EDG[i+1]*2)
+            m_rain, _ = quad(lambda D: np.pi/6 * RHOW * D**3 * 
+                                    gamma_distribution(D, N0r, lambdar, mur),
+                                    R_EDG[i]*2, R_EDG[i+1]*2)
+            dndlnr_bin[i] += n_rain / DLNR
+            dmdlnr_bin[i] += m_rain / DLNR
 
-        ####################################################################
-        if make_plot_r:
-            import matplotlib.pyplot as plt
-            import matplotlib.gridspec as gridspec
-            
-            ### bin
-            dum_NDdD_bin = gamma_psdr_bin[:]*deltad[:]        # unit: m-3
-            dum_MDdD_bin = dum_NDdD_bin[:]*q_cen[:]*1e-6      # unit:kg m-3
-
-            ### gamma PSD
-            powlaw_coeff = np.linspace(start=-9,stop=-1,num=100,endpoint=True)
-            dd           = 10.0**powlaw_coeff 
-
-            deltadd = (dd - np.roll(dd,1))[1:]
-            centerdd= ((dd + np.roll(dd,1))/2.0)[1:]
-
-            gamma_psdr   = N0r*(centerdd[:]**mur)*np.exp(-lambdar*centerdd[:])      # unit: m-4-u
-            dum_NDdDr    = gamma_psdr[:]*deltadd[:]                                 # unit: m-3
-            dum_massDr   = dum_NDdDr[:]*(np.pi/6.0*centerdd[:]**3*RHOW)             # unit: kg/m3. Assumption: spherical
-
-            # line number and mass (true value)
-            v,lr_left = find_nearest(centerdd,D_cen[0])
-            v,lr_righ = find_nearest(centerdd,D_cen[-1])
-            
-            total_nl = np.sum(dum_NDdDr[lr_left:lr_righ+1])*1.0e-6  # unit: cm-3
-            total_ml = np.sum(dum_massDr[lr_left:lr_righ+1])*1.0e-3 # unit: g cm-3
-            
-            # bin number and mass 
-            total_nl_bin = np.sum(dum_NDdD_bin*1.0e-6)
-            total_ml_bin = np.sum(dum_MDdD_bin*1.0e-3)
-            
-            dpi = 300
-            fig = plt.figure(figsize=(1800/dpi,1200/dpi), dpi=dpi) ##,constrained_layout=True)
-            spec= gridspec.GridSpec(ncols=2, nrows=2,figure=fig,left=0.1, bottom=0.1,right=0.95,top=0.95)
-            spec.update(wspace=0.4,hspace=0.45)
-            
-            ax = []
-
-            ax.append(fig.add_subplot(spec[0, 0]))
-            # ax[-1].set_ylim(0,10)
-            ax[-1].set_yscale('linear')
-            ax[-1].set_ylabel('Number [L$^{-1}$]',fontsize=10)
-            ax[-1].set_xscale('log')
-            #ax[-1].set_xlim(1.0e-10,1.0e4)
-            ax[-1].set_xlabel('Diameter [\u03bcm]', fontsize=10)
-            ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
-            ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
-            ax[-1].plot(centerdd*1.0e6,dum_NDdDr*1.0e-6*1e3,alpha=0.8,lw=1,linestyle='-',c='k',)
-            ax[-1].bar(D_cen*1.0e6,dum_NDdD_bin*1.0e-6*1e3,width=deltad*1.0e6,edgecolor='k',linewidth=0.5)
-            ax[-1].axvline(x=D_cen[0]*1.0e6, ymin=-10, ymax=1.0e2,linestyle=':',lw=1,color='grey')
-            ax[-1].axvline(x=D_cen[-1]*1.0e6, ymin=-10, ymax=1.0e2,linestyle=':',lw=1,color='grey')
-            ax[-1].text(0.1,0.9,'Given total Nr: '+str("{:.2e}".format(Nr*1.0e-6))+'cm$^{-3}$',fontsize=6,transform = ax[-1].transAxes)
-            ax[-1].text(0.1,0.8,'sum total gamma Nr: '+str("{:.2e}".format(total_nl))+'cm$^{-3}$',fontsize=6,transform = ax[-1].transAxes)
-            ax[-1].text(0.1,0.7,'sum total bin Nr: '+str("{:.2e}".format(total_nl_bin))+'cm$^{-3}$',fontsize=6,transform = ax[-1].transAxes)
-            ax[-1].text(0.1,0.6,'RelDiff: '+str("{:.2f}".format(abs(Nr*1.0e-6-total_nl_bin)/(Nr*1.0e-6)*100.))+'%',fontsize=6,transform = ax[-1].transAxes)
-
-
-            ax.append(fig.add_subplot(spec[1, 0]))
-            # ax[-1].set_ylim(0,2.0e-8)
-            ax[-1].set_yscale('linear')
-            ax[-1].set_ylabel('Mass [g cm$^{-3}$]',fontsize=10)
-            ax[-1].set_xscale('log')
-            #ax[-1].set_xlim(1.0e-10,1.0e4)
-            ax[-1].set_xlabel('Diameter [\u03bcm]', fontsize=10)
-            ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
-            ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
-            ax[-1].plot(centerdd*1.0e6,dum_massDr*1.0e-3,alpha=0.8,lw=1,linestyle='-',c='k',)
-            ax[-1].bar(D_cen*1.0e6,dum_MDdD_bin*1.0e-3,width=deltad*1.0e6,edgecolor='k',linewidth=0.5)
-            ax[-1].axvline(x=D_cen[0]*1.0e6, ymin=-10, ymax=1.0e2,linestyle=':',lw=1,color='grey')
-            ax[-1].axvline(x=D_cen[-1]*1.0e6, ymin=-10, ymax=1.0e2,linestyle=':',lw=1,color='grey')
-            ax[-1].text(0.1,0.9,'Given total mr: '+str("{:.2e}".format(Qr*1.0e-3))+'g cm$^{-3}$',fontsize=6,transform = ax[-1].transAxes)
-            ax[-1].text(0.1,0.8,'sum total gamma mr: '+str("{:.2e}".format(total_ml))+'g cm$^{-3}$',fontsize=6,transform = ax[-1].transAxes)
-            ax[-1].text(0.1,0.7,'sum total bin mr: '+str("{:.2e}".format(total_ml_bin))+'g cm$^{-3}$',fontsize=6,transform = ax[-1].transAxes)
-            ax[-1].text(0.1,0.6,'RelDiff: '+str("{:.2f}".format(abs(Qr*1.0e-3-total_ml_bin)/(Qr*1.0e-3)*100.))+'%',fontsize=6,transform = ax[-1].transAxes)
-
-            plt.savefig('PSDr_comparison.png')
-            plt.close()
-        ####################################################################
-
-    if (qc_in > qsmall) or (qr_in > qsmall):
-        ### add cloud and rain PSD into a single combined PSD
-        # each bin total number
-        NDdD_bin[:] = (gamma_psdc_bin[:]+gamma_psdr_bin[:])*deltad[:] # unit: m-3
-        # each bin total mass
-        MDdD_bin[:] = NDdD_bin[:] * q_cen[:] * 1e-6                   # unit:kg m-3
-
-        ####################################################################
+    if (qc_in > qsmall) or (qr_in > qsmall):        
+        #####################################################################
+        ### call SDM emulator function, pass in "initial" PSD, return new PSD after the collision-coalescence processes with a timte step = 100 sec
+        dt = 100.0                                             # unit: sec
+        new_dmdlnr_bin, new_dndlnr_bin = py_SDM.compute_coll_SDM(NUMBIN, dt, dmdlnr_bin[:], dndlnr_bin[:])
+        #####################################################################
+    
         if make_plot_total:
             import matplotlib.pyplot as plt
             import matplotlib.gridspec as gridspec
 
             ### gamma PSD
-            powlaw_coeff = np.linspace(start=-9,stop=-1,num=100,endpoint=True)
-            dd           = 10.0**powlaw_coeff 
+            log10d  = np.linspace(start=-9,stop=-1,num=100,endpoint=True)
+            d_plt   = 10.0**log10d
 
-            deltadd = (dd - np.roll(dd,1))[1:]
-            centerdd= ((dd + np.roll(dd,1))/2.0)[1:]
+            gamma_psdc   = gamma_distribution(d_plt, N0c, lambdac, muc)          # unit: m-4-u
+            dum_NDdDc    = gamma_psdc[:]*d_plt[:]                                # unit: m-3
+            dum_massDc   = dum_NDdDc[:]*(np.pi/6.0*d_plt[:]**3*RHOW)             # unit: kg/m3. Assumption: spherical
 
-            gamma_psdc   = N0c*(centerdd[:]**muc)*np.exp(-lambdac*centerdd[:])      # unit: m-4-u
-            dum_NDdDc    = gamma_psdc[:]*deltadd[:]                                 # unit: m-3
-            dum_massDc   = dum_NDdDc[:]*(np.pi/6.0*centerdd[:]**3*RHOW)             # unit: kg/m3. Assumption: spherical
+            gamma_psdr   = gamma_distribution(d_plt, N0r, lambdar, mur)          # unit: m-4-u
+            dum_NDdDr    = gamma_psdr[:]*d_plt[:]                                # unit: m-3
+            dum_massDr   = dum_NDdDr[:]*(np.pi/6.0*d_plt[:]**3*RHOW)          # unit: kg/m3. Assumption: spherical
 
-            gamma_psdr   = N0r*(centerdd[:]**mur)*np.exp(-lambdar*centerdd[:])      # unit: m-4-u
-            dum_NDdDr    = gamma_psdr[:]*deltadd[:]                                 # unit: m-3
-            dum_massDr   = dum_NDdDr[:]*(np.pi/6.0*centerdd[:]**3*RHOW)             # unit: kg/m3. Assumption: spherical
-
-            # line number and mass (true value)
-            v,lr_left = find_nearest(centerdd,D_cen[0])
-            v,lr_righ = find_nearest(centerdd,D_cen[-1])
-            
             dpi = 300
             fig = plt.figure(figsize=(1800/dpi,1200/dpi), dpi=dpi) ##,constrained_layout=True)
             spec= gridspec.GridSpec(ncols=2, nrows=2,figure=fig,left=0.1, bottom=0.1,right=0.95,top=0.95)
@@ -304,17 +124,44 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
             ax[-1].set_yscale('linear')
             ax[-1].set_ylabel('Number [cm$^{-3}$]',fontsize=10)
             ax[-1].set_xscale('log')
+            ax[-1].set_xlim([2*R_EDG[0]*1.0e6, 2*R_EDG[-1]*1.0e6])
+            ax[-1].set_xlabel('Diameter [\u03bcm]', fontsize=10)
+            ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
+            ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
+            ax[-1].plot(d_plt*1.0e6,(dum_NDdDc+dum_NDdDr)*1.0e-6,alpha=0.8,lw=1,linestyle='-',c='k',)
+            ax[-1].step(2*R_EDG[:-1]*1e6, dndlnr_bin*1.0e-6, lw=1, linestyle='-', c='r')
+            ax[-1].plot(d_plt*1.0e6,(dum_NDdDc)*1.0e-6,alpha=0.8,lw=1,linestyle='--',c='b',)
+            ax[-1].plot(d_plt*1.0e6,(dum_NDdDr)*1.0e-6,alpha=0.8,lw=1,linestyle='--',c='g',)
+            ax[-1].legend(['total', 'binned', 'cloud', 'rain'])
+
+
+            ax.append(fig.add_subplot(spec[1, 0]))
+            # ax[-1].set_ylim(0,2.0e-7)
+            ax[-1].set_yscale('linear')
+            ax[-1].set_ylabel('Mass [g cm$^{-3}$]',fontsize=10)
+            ax[-1].set_xscale('log')
+            ax[-1].set_xlim([2*R_EDG[0]*1.0e6, 2*R_EDG[-1]*1.0e6])
+            ax[-1].set_xlabel('Diameter [\u03bcm]', fontsize=10)
+            ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
+            ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
+            ax[-1].plot(d_plt*1.0e6,(dum_massDc+dum_massDr)*1.0e-3,alpha=0.8,lw=1,linestyle='-',c='k',)
+            ax[-1].step(2*R_EDG[:-1]*1.0e6, dmdlnr_bin*1.0e-3, lw=1, linestyle='-', c='r',)
+            ax[-1].plot(d_plt*1.0e6,(dum_massDc)*1.0e-3,alpha=0.8,lw=1,linestyle='--',c='b',)
+            ax[-1].plot(d_plt*1.0e6,(dum_massDr)*1.0e-3,alpha=0.8,lw=1,linestyle='--',c='g',)
+
+            ax.append(fig.add_subplot(spec[0, 1]))
+            # ax[-1].set_ylim(0,20)
+            ax[-1].set_yscale('linear')
+            ax[-1].set_ylabel('Number [cm$^{-3}$]',fontsize=10)
+            ax[-1].set_xscale('log')
             #ax[-1].set_xlim(1.0e-10,1.0e4)
             ax[-1].set_xlabel('Diameter [\u03bcm]', fontsize=10)
             ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
             ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
-            ax[-1].plot(centerdd*1.0e6,(dum_NDdDc+dum_NDdDr)*1.0e-6,alpha=0.8,lw=1,linestyle='-',c='k',)
-            ax[-1].plot(D_cen*1e6, NDdD_bin*1.0e-6, lw=1, linestyle=':', c='r')
-            ax[-1].axvline(x=D_cen[0]*1.0e6, ymin=-10, ymax=1.0e2,linestyle=':',lw=1,color='grey')
-            ax[-1].axvline(x=D_cen[-1]*1.0e6, ymin=-10, ymax=1.0e2,linestyle=':',lw=1,color='grey')
+            ax[-1].step(2*R_EDG[:-1]*1e6, new_dndlnr_bin*1.0e-6, lw=1, linestyle='-', c='r')
+            ax[-1].legend(['after dt'])
 
-
-            ax.append(fig.add_subplot(spec[1, 0]))
+            ax.append(fig.add_subplot(spec[1, 1]))
             # ax[-1].set_ylim(0,2.0e-7)
             ax[-1].set_yscale('linear')
             ax[-1].set_ylabel('Mass [g cm$^{-3}$]',fontsize=10)
@@ -323,55 +170,40 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
             ax[-1].set_xlabel('Diameter [\u03bcm]', fontsize=10)
             ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
             ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
-            ax[-1].plot(centerdd*1.0e6,(dum_massDc+dum_massDr)*1.0e-3,alpha=0.8,lw=1,linestyle='-',c='k',)
-            ax[-1].plot(D_cen*1.0e6,MDdD_bin*1.0e-3, lw=1, linestyle=':', c='r',)
-            ax[-1].axvline(x=D_cen[0]*1.0e6, ymin=-10, ymax=1.0e2,linestyle=':',lw=1,color='grey')
-            ax[-1].axvline(x=D_cen[-1]*1.0e6, ymin=-10, ymax=1.0e2,linestyle=':',lw=1,color='grey')
+            ax[-1].step(2*R_EDG[:-1]*1.0e6, new_dmdlnr_bin*1.0e-3, lw=1, linestyle='-', c='r',)
+            ax[-1].legend(['after dt'])
 
             plt.savefig('PSD_total_comparison.png')
             plt.close()
-        ####################################################################
-        
-        ### determine cloud liquid and rain cutoff size
-        ### for simplicity, use a fixed radius threshold of 40 um to differentiate raindrops from cloud droplets for now (reference to 40 um: Gettelman et al 2021 JAMES; Geoffroy et al., 2014 ACP; Azimi et al. 2024 JAMES: 50um radius)
-        val,cutoff_idx = find_nearest(r_cen, 40)
-        # print('cutoff: ', val, ' ', cutoff_idx)
-        
-        #####################################################################
-        ### call SDM emulator function, pass in "initial" PSD, return new PSD after the collision-coalescence processes with a timte step = 100 sec
-        dt = 100.0                                             # unit: sec
-        new_MDdD_bin, new_NDdD_bin = py_SDM.compute_coll_SDM(NUMBIN, dt, MDdD_bin[:], NDdD_bin[:])
-        #####################################################################
-    
+
         ### derive tendencies
         ### cloud liquid 
-        cld_dsd_nbf  = np.sum(NDdD_bin[0:cutoff_idx+1])
-        #cld_dsd_nbf  = np.sum(MDdD_bin[0:cutoff_idx+1]/(q_edg[0:cutoff_idx+1] * 1e-6))
-        cld_dsd_mbf  = np.sum(MDdD_bin[0:cutoff_idx+1])
+        cld_dsd_nbf  = np.sum(dndlnr_bin[0:cutoff_idx+1]) * DLNR
+        cld_dsd_mbf  = np.sum(dmdlnr_bin[0:cutoff_idx+1]) * DLNR
         
-        cld_dsd_naf  = np.sum(new_NDdD_bin[0:cutoff_idx+1])
-        #cld_dsd_naf  = np.sum(new_MDdD_bin[0:cutoff_idx+1]/(q_edg[0:cutoff_idx+1] * 1e-6))
-        cld_dsd_maf  = np.sum(new_MDdD_bin[0:cutoff_idx+1])
+        cld_dsd_naf  = np.sum(new_dndlnr_bin[0:cutoff_idx+1]) * DLNR
+        cld_dsd_maf  = np.sum(new_dmdlnr_bin[0:cutoff_idx+1]) * DLNR
         
         ### rain
-        rain_dsd_nbf = np.sum(NDdD_bin[cutoff_idx+1:NUMBIN])
-        #rain_dsd_nbf = np.sum(MDdD_bin[cutoff_idx+1:NUMBIN]/(q_edg[cutoff_idx+1:NUMBIN] * 1e-6))
-        rain_dsd_mbf = np.sum(MDdD_bin[cutoff_idx+1:NUMBIN])
+        rain_dsd_nbf = np.sum(dndlnr_bin[cutoff_idx+1:NUMBIN]) * DLNR
+        rain_dsd_mbf = np.sum(dmdlnr_bin[cutoff_idx+1:NUMBIN]) * DLNR
     
-        rain_dsd_naf = np.sum(new_NDdD_bin[cutoff_idx+1:NUMBIN])
-        #rain_dsd_naf =  np.sum(new_MDdD_bin[cutoff_idx+1:NUMBIN]/(q_edg[cutoff_idx+1:NUMBIN] * 1e-6))
-        rain_dsd_maf = np.sum(new_MDdD_bin[cutoff_idx+1:NUMBIN])
+        rain_dsd_naf = np.sum(new_dndlnr_bin[cutoff_idx+1:NUMBIN]) * DLNR
+        rain_dsd_maf = np.sum(new_dmdlnr_bin[cutoff_idx+1:NUMBIN]) * DLNR
     
         ### total liquid for mass conservation test
-        nliqtotbf = np.sum(NDdD_bin[0:NUMBIN])
-        qliqtotbf = np.sum(MDdD_bin[0:NUMBIN])
+        nliqtotbf = np.sum(dndlnr_bin)
+        qliqtotbf = np.sum(dmdlnr_bin)
     
-        nliqtotaft= np.sum(new_NDdD_bin[0:NUMBIN])
-        qliqtotaft= np.sum(new_MDdD_bin[0:NUMBIN])
+        nliqtotaft= np.sum(new_dndlnr_bin)
+        qliqtotaft= np.sum(new_dmdlnr_bin)
+
+        # print(cld_dsd_nbf, cld_dsd_naf, rain_dsd_nbf, rain_dsd_naf, nliqtotbf, nliqtotaft)
+        # print(cld_dsd_mbf, cld_dsd_maf, rain_dsd_mbf, rain_dsd_maf, qliqtotbf, qliqtotaft)
 
         if (((qliqtotaft - qliqtotbf)/qliqtotbf) < 1e-10):
+            print('Mass conservation verified')
             pass
-            ### mass is conserved.
         else:
             print('Mass is not conserved. Check!')
             sys.exit()
@@ -394,13 +226,11 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
         nc_tend_out = 0.0
         qr_tend_out = 0.0
         nr_tend_out = 0.0
-    
-    return qc_tend_out, nc_tend_out, qr_tend_out, nr_tend_out
+        
+    return qc_tend_out, nc_tend_out, qr_tend_out, nr_tend_out # Note that these are really rho_Q and rho_N tendencies (rho of air)
 
-def find_nearest(array, value):
-    import numpy as np
-    idx = (np.abs(array - value)).argmin()
-    return array[idx], idx
+def gamma_distribution(D, N0, lambda0, mu):
+        return N0 * D**mu * np.exp(-lambda0 * D)
 
 def get_gamma_params(Nt, qt, mu, rho_air = 1.0):
     gamma_ratio = math.gamma(mu + 4) / math.gamma(mu + 1)
