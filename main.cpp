@@ -10,8 +10,8 @@ int main() {
     // Pass dummy cloud variables to SDM interface
     double qc = 0.4e-3;    // unit: kg/kg
     double nc = 1e9;       // unit: 1/kg
-    double qr = 0.2e-4;    // unit: kg/kg
-    double nr = 1e4;       // unit: 1/kg
+    double qr = 0.0e-4;    // unit: kg/kg
+    double nr = 0e4;       // unit: 1/kg
     double muc = 3;        // unitless
     double mur = 1;        // unitless
 
@@ -36,7 +36,7 @@ int main() {
     std::cout << "C++ Begins. " << std::endl;
     // Import SDM_interface python module and call function with scalars
     py::module mod = py::module::import("py_interface");
-    py::tuple result = mod.attr("SDM_interface")(qc2, nc2, qr2, nr2, muc, mur, QSMALL);
+    py::tuple result = mod.attr("ROM_interface")(qc2, nc2, qr2, nr2, muc, mur, QSMALL);
 
     // Unpack tuple: retrieve tendency rate terms
     double qctend = result[0].cast<double>()/rho;  // unit: kg/kg/s

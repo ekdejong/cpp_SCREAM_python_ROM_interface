@@ -1,12 +1,19 @@
 import math
 import numpy as np
 import sys
-import py_SDM
+import py_ROM
 from scipy.integrate import quad
 
 def find_nearest(array, value):
     idx = (np.abs(array - value)).argmin()
     return array[idx], idx
+
+def get_M_to_N_factors(numbin, rhow, r_edg):
+    m_to_n_factors = np.ones((numbin)) / 4 / np.pi / rhow
+    for i in range(numbin):
+        m_to_n_factors[i] = m_to_n_factors[i] / np.log(r_edg[i+1] / r_edg[i]) 
+        m_to_n_factors[i] = m_to_n_factors[i] * (1 / r_edg[i]**3 - 1 / r_edg[i+1]**3)
+    return m_to_n_factors
 
 # CONSTANTS
 # radius bins
@@ -18,6 +25,7 @@ R_EDG = np.exp(np.linspace(np.log(EDGL), np.log(EDGR), NUMEDG))
 DLNR = (np.log(EDGR) - np.log(EDGL)) / NUMEDG
 
 RHOW = 1000.0   # liquid water density, unit: kg/m3
+M_TO_N_FACTORS = get_M_to_N_factors(NUMBIN, RHOW, R_EDG)
 ### determine cloud liquid and rain cutoff size
 ### for simplicity, use a fixed radius threshold of 40 um to differentiate raindrops from cloud droplets for now (reference to 40 um: Gettelman et al 2021 JAMES; Geoffroy et al., 2014 ACP; Azimi et al. 2024 JAMES: 50um radius)
 val,cutoff_idx = find_nearest(R_EDG, 40 * 1.e-6)
@@ -26,7 +34,7 @@ print('cutoff: ', val, ' ', cutoff_idx)
 ### flags controlling plotting
 make_plot_total = True
 
-def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
+def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
     """
     Description: A python interface that links to SDM python.
     Here reads in cloud variables from C++, creates assumed gamma size distributions based on the bulk properties, put into bins, and passes the bin distribution to SDM calculations, and retrieves the calculated rain tendency rate terms due to collision-coalescence and passes them back to C++.
@@ -92,8 +100,8 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
     if (qc_in > qsmall) or (qr_in > qsmall):        
         #####################################################################
         ### call SDM emulator function, pass in "initial" PSD, return new PSD after the collision-coalescence processes with a timte step = 100 sec
-        dt = 100.0                                             # unit: sec
-        new_dmdlnr_bin, new_dndlnr_bin = py_SDM.compute_coll_SDM(NUMBIN, dt, dmdlnr_bin[:], dndlnr_bin[:])
+        dt = 1000.0                                             # unit: sec
+        new_dmdlnr_bin, new_dndlnr_bin = py_ROM.compute_coll_SDM(NUMBIN, dt, dmdlnr_bin[:], dndlnr_bin[:], M_TO_N_FACTORS)
         #####################################################################
     
         if make_plot_total:
@@ -198,8 +206,8 @@ def SDM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
         nliqtotaft= np.sum(new_dndlnr_bin)
         qliqtotaft= np.sum(new_dmdlnr_bin)
 
-        # print(cld_dsd_nbf, cld_dsd_naf, rain_dsd_nbf, rain_dsd_naf, nliqtotbf, nliqtotaft)
-        # print(cld_dsd_mbf, cld_dsd_maf, rain_dsd_mbf, rain_dsd_maf, qliqtotbf, qliqtotaft)
+        print(cld_dsd_nbf, cld_dsd_naf, rain_dsd_nbf, rain_dsd_naf, nliqtotbf, nliqtotaft)
+        print(cld_dsd_mbf, cld_dsd_maf, rain_dsd_mbf, rain_dsd_maf, qliqtotbf, qliqtotaft)
 
         if (((qliqtotaft - qliqtotbf)/qliqtotbf) < 1e-10):
             print('Mass conservation verified')

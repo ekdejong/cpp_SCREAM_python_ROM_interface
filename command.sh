@@ -1,11 +1,12 @@
 #!/bin/bash
 
-module load python/3.9
+module load python/3.10
+source pyROMenv/bin/activate
 
 g++ main.cpp -o main \
 $(python3-config --includes) \
 -L$(python3 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))") \
--lpython3.9 \
+-lpython3.10 \
 -Wl,-rpath=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
 
 TARGET_FILE="./main"
@@ -17,3 +18,5 @@ done
 
 echo "running..."
 ./main
+
+deactivate
