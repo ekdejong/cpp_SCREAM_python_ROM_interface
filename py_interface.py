@@ -17,7 +17,7 @@ def get_M_to_N_factors(numbin, rhow, r_edg):
 
 # CONSTANTS
 # radius bins
-NUMBIN = 64
+NUMBIN = 63
 NUMEDG = NUMBIN + 1
 EDGR = 5e-3                    # unit: m
 EDGL = 1e-6                    # unit: m
@@ -100,7 +100,7 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
     if (qc_in > qsmall) or (qr_in > qsmall):        
         #####################################################################
         ### call SDM emulator function, pass in "initial" PSD, return new PSD after the collision-coalescence processes with a timte step = 100 sec
-        dt = 1000.0                                             # unit: sec
+        dt = 100.0                                             # unit: sec
         new_dmdlnr_bin, new_dndlnr_bin = py_ROM.compute_coll_SDM(NUMBIN, dt, dmdlnr_bin[:], dndlnr_bin[:], M_TO_N_FACTORS)
         #####################################################################
     
@@ -137,7 +137,7 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
             ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
             ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
             ax[-1].plot(d_plt*1.0e6,(dum_NDdDc+dum_NDdDr)*1.0e-6,alpha=0.8,lw=1,linestyle='-',c='k',)
-            ax[-1].step(2*R_EDG[:-1]*1e6, dndlnr_bin*1.0e-6, lw=1, linestyle='-', c='r')
+            ax[-1].step((R_EDG[:-1] + R_EDG[1:])*1e6, dndlnr_bin*1.0e-6, lw=1, linestyle='-', c='r')
             ax[-1].plot(d_plt*1.0e6,(dum_NDdDc)*1.0e-6,alpha=0.8,lw=1,linestyle='--',c='b',)
             ax[-1].plot(d_plt*1.0e6,(dum_NDdDr)*1.0e-6,alpha=0.8,lw=1,linestyle='--',c='g',)
             ax[-1].legend(['total', 'binned', 'cloud', 'rain'])
@@ -153,7 +153,7 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
             ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
             ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
             ax[-1].plot(d_plt*1.0e6,(dum_massDc+dum_massDr)*1.0e-3,alpha=0.8,lw=1,linestyle='-',c='k',)
-            ax[-1].step(2*R_EDG[:-1]*1.0e6, dmdlnr_bin*1.0e-3, lw=1, linestyle='-', c='r',)
+            ax[-1].step((R_EDG[:-1] + R_EDG[1:])*1.0e6, dmdlnr_bin*1.0e-3, lw=1, linestyle='-', c='r',)
             ax[-1].plot(d_plt*1.0e6,(dum_massDc)*1.0e-3,alpha=0.8,lw=1,linestyle='--',c='b',)
             ax[-1].plot(d_plt*1.0e6,(dum_massDr)*1.0e-3,alpha=0.8,lw=1,linestyle='--',c='g',)
 
@@ -206,8 +206,8 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
         nliqtotaft= np.sum(new_dndlnr_bin)
         qliqtotaft= np.sum(new_dmdlnr_bin)
 
-        print(cld_dsd_nbf, cld_dsd_naf, rain_dsd_nbf, rain_dsd_naf, nliqtotbf, nliqtotaft)
-        print(cld_dsd_mbf, cld_dsd_maf, rain_dsd_mbf, rain_dsd_maf, qliqtotbf, qliqtotaft)
+        # print(cld_dsd_nbf, cld_dsd_naf, rain_dsd_nbf, rain_dsd_naf, nliqtotbf, nliqtotaft)
+        # print(cld_dsd_mbf, cld_dsd_maf, rain_dsd_mbf, rain_dsd_maf, qliqtotbf, qliqtotaft)
 
         if (((qliqtotaft - qliqtotbf)/qliqtotbf) < 1e-10):
             print('Mass conservation verified')

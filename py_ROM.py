@@ -5,8 +5,8 @@ from rom_utils import AESINDy, simulate
 # Constants for setup
 LATENT_DIM = 3
 POLY_ORDER = 2
-NBIN = 64
-WEIGHT_DIR = "./aesindy_weights.pth"
+NBIN = 63
+WEIGHT_DIR = "./aesindy_weights_pysdm.pth"
 M_SCALE = 0.01046717958952477           # units: kg m^-3 (lnr)^-1
 ZLIM = np.load("./zlim_data.npz")['zlim']
 # override mass limits
