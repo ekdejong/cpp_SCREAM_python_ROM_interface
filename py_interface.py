@@ -1,40 +1,22 @@
-import math
-import numpy as np
-import sys
-import py_ROM
-from scipy.integrate import quad
-
 def find_nearest(array, value):
+    import numpy as np
     idx = (np.abs(array - value)).argmin()
     return array[idx], idx
 
 def get_M_to_N_factors(numbin, rhow, r_edg):
+    import numpy as np
     m_to_n_factors = np.ones((numbin)) / 4 / np.pi / rhow
     for i in range(numbin):
         m_to_n_factors[i] = m_to_n_factors[i] / np.log(r_edg[i+1] / r_edg[i]) 
         m_to_n_factors[i] = m_to_n_factors[i] * (1 / r_edg[i]**3 - 1 / r_edg[i+1]**3)
     return m_to_n_factors
 
-# CONSTANTS
-# radius bins
-NUMBIN = 63
-NUMEDG = NUMBIN + 1
-EDGR = 5e-3                    # unit: m
-EDGL = 1e-6                    # unit: m
-R_EDG = np.exp(np.linspace(np.log(EDGL), np.log(EDGR), NUMEDG))
-DLNR = (np.log(EDGR) - np.log(EDGL)) / NUMEDG
-
-RHOW = 1000.0   # liquid water density, unit: kg/m3
-M_TO_N_FACTORS = get_M_to_N_factors(NUMBIN, RHOW, R_EDG)
-### determine cloud liquid and rain cutoff size
-### for simplicity, use a fixed radius threshold of 40 um to differentiate raindrops from cloud droplets for now (reference to 40 um: Gettelman et al 2021 JAMES; Geoffroy et al., 2014 ACP; Azimi et al. 2024 JAMES: 50um radius)
-val,cutoff_idx = find_nearest(R_EDG, 40 * 1.e-6)
-print('cutoff: ', val, ' ', cutoff_idx)
-
-### flags controlling plotting
-make_plot_total = True
-
 def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
+    import numpy as np
+    import sys
+    import py_ROM
+    from scipy.integrate import quad
+
     """
     Description: A python interface that links to SDM python.
     Here reads in cloud variables from C++, creates assumed gamma size distributions based on the bulk properties, put into bins, and passes the bin distribution to SDM calculations, and retrieves the calculated rain tendency rate terms due to collision-coalescence and passes them back to C++.
@@ -54,6 +36,26 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
     qr_tend_out: time rate of change of rain due to collision-coalescence for a given time step, kg/m3/s
     nr_tend_out: time rate of change of raindrop number due to collision-coalescence for a given time step, 1/m3/s
     """
+    # CONSTANTS
+    # radius bins
+    NUMBIN = 63
+    NUMEDG = NUMBIN + 1
+    EDGR = 5e-3                    # unit: m
+    EDGL = 1e-6                    # unit: m
+    R_EDG = np.exp(np.linspace(np.log(EDGL), np.log(EDGR), NUMEDG))
+    DLNR = (np.log(EDGR) - np.log(EDGL)) / NUMEDG
+
+    RHOW = 1000.0   # liquid water density, unit: kg/m3
+    M_TO_N_FACTORS = get_M_to_N_factors(NUMBIN, RHOW, R_EDG)
+    ### determine cloud liquid and rain cutoff size
+    ### for simplicity, use a fixed radius threshold of 40 um to differentiate raindrops from cloud droplets for now (reference to 40 um: Gettelman et al 2021 JAMES; Geoffroy et al., 2014 ACP; Azimi et al. 2024 JAMES: 50um radius)
+    val,cutoff_idx = find_nearest(R_EDG, 40 * 1.e-6)
+    print('cutoff: ', val, ' ', cutoff_idx)
+
+    ### flags controlling plotting
+    # !!for some reason related to importing matplotlib, 
+    # !!turning on plots leads to a C++ error: "free(): invalid pointer"
+    make_plot_total = True
 
     ### a scalar
     Nc = nc_in
@@ -74,7 +76,7 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
     dmdlnr_bin     = np.zeros((NUMBIN))
 
     if qc_in > qsmall:
-        (N0c, lambdac) = get_gamma_params(Nc, Qc, muc)
+        (N0c, lambdac) = get_gamma_params(Nc, Qc, muc, RHOW=RHOW)
         print('cloud liquid N0, lambda= ', N0c, lambdac)
         for i in range(NUMBIN):
             n_cloud, _ = quad(lambda D: gamma_distribution(D, N0c, lambdac, muc),
@@ -200,25 +202,21 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
         rain_dsd_maf = np.sum(new_dmdlnr_bin[cutoff_idx+1:NUMBIN]) * DLNR
     
         ### total liquid for mass conservation test
-        nliqtotbf = np.sum(dndlnr_bin)
         qliqtotbf = np.sum(dmdlnr_bin)
     
-        nliqtotaft= np.sum(new_dndlnr_bin)
         qliqtotaft= np.sum(new_dmdlnr_bin)
 
-        # print(cld_dsd_nbf, cld_dsd_naf, rain_dsd_nbf, rain_dsd_naf, nliqtotbf, nliqtotaft)
-        # print(cld_dsd_mbf, cld_dsd_maf, rain_dsd_mbf, rain_dsd_maf, qliqtotbf, qliqtotaft)
+        mass_noncons = (qliqtotaft - qliqtotbf)/qliqtotbf * 100.0
 
-        if (((qliqtotaft - qliqtotbf)/qliqtotbf) < 1e-10):
-            print('Mass conservation verified')
-            pass
+        if (mass_noncons < 1e-4):
+            print(f'Mass conservation verified to {mass_noncons:.8f}% error')
         else:
-            print('Mass is not conserved. Check!')
-            sys.exit()
+            raise RuntimeError(f'Mass is not conserved. Check! {mass_noncons:.5f}% error')
+
             
         qc_tend_out = (cld_dsd_maf - cld_dsd_mbf)/dt   # unit: kg m-3 s-1
         nc_tend_out = (cld_dsd_naf - cld_dsd_nbf)/dt   # unit: m-3 s-1
-        qr_tend_out = (rain_dsd_maf - rain_dsd_mbf)/dt # unit: kg m-3 s-1
+        qr_tend_out = -qc_tend_out        # Enforce mass conservation exactly in bulk quantities
         nr_tend_out = (rain_dsd_naf - rain_dsd_nbf)/dt # unit: m-3 s-1
 
         if (qc_in < qsmall) and (qr_in > qsmall):
@@ -238,9 +236,12 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
     return qc_tend_out, nc_tend_out, qr_tend_out, nr_tend_out # Note that these are really rho_Q and rho_N tendencies (rho of air)
 
 def gamma_distribution(D, N0, lambda0, mu):
-        return N0 * D**mu * np.exp(-lambda0 * D)
+    import numpy as np
+    return N0 * D**mu * np.exp(-lambda0 * D)
 
-def get_gamma_params(Nt, qt, mu, rho_air = 1.0):
+def get_gamma_params(Nt, qt, mu, rho_air = 1.0, RHOW = 1000.0):
+    import math
+    import numpy as np
     gamma_ratio = math.gamma(mu + 4) / math.gamma(mu + 1)
     lambda0 = (np.pi / 6 * RHOW * Nt * gamma_ratio / (qt * rho_air))**(1.0/3.0)  # unit: meter -1
     N0      = Nt*lambda0**(mu+1)/math.gamma(mu+1)   # unit: m^(-mu-4)

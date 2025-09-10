@@ -8,7 +8,7 @@ from torch.nn import (
     Softmax,
 )
 from scipy.special import binom
-from scipy.integrate import solve_ivp
+
 from itertools import combinations_with_replacement
 
 """
@@ -201,12 +201,15 @@ class SINDyDeriv(torch.nn.Module):
         self.sindy_coeffs.weight.data = self.mask * self.sindy_coeffs.weight.data
 
 def library_size(n, poly_order):
+    from scipy.special import binom
     l = 0
     for k in range(poly_order + 1):
         l += int(binom(n + k - 1, k))
     return l
 
 def sindy_library_tensor(z, latent_dim, poly_order):
+    from itertools import combinations_with_replacement
+    import torch
     library_dim = library_size(latent_dim, poly_order)
     if len(z.shape) == 1:
         z = z.unsqueeze(0)
@@ -243,6 +246,8 @@ def sindy_library_tensor(z, latent_dim, poly_order):
     return new_library
 
 def simulate(z0, T, dz_network, z_lim):
+    from scipy.integrate import solve_ivp
+    import torch
     def f(t, z):
         n_latent = z.size
         dz = dz_network(torch.Tensor(z)).squeeze().detach().numpy()
