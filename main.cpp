@@ -10,7 +10,7 @@ int main() {
     // Pass dummy cloud variables to SDM interface
     double qc = 0.4e-3;    // unit: kg/kg
     double nc = 1e9;       // unit: 1/kg
-    double qr = 0.0e-4;    // unit: kg/kg
+    double qr = 0.2e-4;    // unit: kg/kg
     double nr = 0e4;       // unit: 1/kg
     double muc = 3;        // unitless
     double mur = 1;        // unitless
