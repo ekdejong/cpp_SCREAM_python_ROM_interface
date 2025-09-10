@@ -1,11 +1,3 @@
-<<<<<<< Updated upstream
-=======
-import math
-import numpy as np
-import py_ROM
-from scipy.integrate import quad
->>>>>>> Stashed changes
-
 def find_nearest(array, value):
     import numpy as np
     idx = (np.abs(array - value)).argmin()
@@ -61,7 +53,9 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
     print('cutoff: ', val, ' ', cutoff_idx)
 
     ### flags controlling plotting
-    make_plot_total = False
+    # !!for some reason related to importing matplotlib, 
+    # !!turning on plots leads to a C++ error: "free(): invalid pointer"
+    make_plot_total = True
 
     ### a scalar
     Nc = nc_in
@@ -208,22 +202,21 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
         rain_dsd_maf = np.sum(new_dmdlnr_bin[cutoff_idx+1:NUMBIN]) * DLNR
     
         ### total liquid for mass conservation test
-        nliqtotbf = np.sum(dndlnr_bin)
         qliqtotbf = np.sum(dmdlnr_bin)
     
-        nliqtotaft= np.sum(new_dndlnr_bin)
         qliqtotaft= np.sum(new_dmdlnr_bin)
 
-        if (((qliqtotaft - qliqtotbf)/qliqtotbf) < 1e-10):
-            print('Mass conservation verified')
+        mass_noncons = (qliqtotaft - qliqtotbf)/qliqtotbf * 100.0
+
+        if (mass_noncons < 1e-4):
+            print(f'Mass conservation verified to {mass_noncons:.8f}% error')
         else:
-            print('Mass is not conserved. Check!')
-            #raise RuntimeError('Mass is not conserved. Check!')
+            raise RuntimeError(f'Mass is not conserved. Check! {mass_noncons:.5f}% error')
 
             
         qc_tend_out = (cld_dsd_maf - cld_dsd_mbf)/dt   # unit: kg m-3 s-1
         nc_tend_out = (cld_dsd_naf - cld_dsd_nbf)/dt   # unit: m-3 s-1
-        qr_tend_out = (rain_dsd_maf - rain_dsd_mbf)/dt # unit: kg m-3 s-1
+        qr_tend_out = -qc_tend_out        # Enforce mass conservation exactly in bulk quantities
         nr_tend_out = (rain_dsd_naf - rain_dsd_nbf)/dt # unit: m-3 s-1
 
         if (qc_in < qsmall) and (qr_in > qsmall):

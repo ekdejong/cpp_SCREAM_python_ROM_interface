@@ -15,7 +15,7 @@ which pip3 # verify that the correct pip installation is being used
 # Install/update packages
 echo "Installing required packages..."
 pip install --upgrade pip
-#pip install -r requirements.txt
+# You'll want to find the correct version of pytorch for your compute platform here:
 # https://pytorch.org/get-started/locally/#start-locally
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install scipy, matploblib, pybind11

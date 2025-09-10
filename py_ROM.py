@@ -40,7 +40,6 @@ def compute_coll_SDM(numbin, dt, dmdlnr_bin, dndlnr_bin, m_to_n_factors):
     # decode; enforce mass conservation exactly, i.e. ignore dM/dt or latents[-1]
     x_scaled_af = model.decoder(torch.Tensor(z_af[-1, :-1])).detach().numpy()
     dmdlnr_af = x_scaled_af * M_dlnr
-    dmdlnr_af = dmdlnr_af * M_dlnr / np.sum(dmdlnr_af) # appears necessary for floating point error / mass conservation
 
     # update dndlnr assuming constant piecewise distribution
     dndlnr_af = dmdlnr_af * m_to_n_factors
