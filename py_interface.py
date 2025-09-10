@@ -1,3 +1,10 @@
+<<<<<<< Updated upstream
+=======
+import math
+import numpy as np
+import py_ROM
+from scipy.integrate import quad
+>>>>>>> Stashed changes
 
 def find_nearest(array, value):
     import numpy as np
@@ -212,6 +219,7 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
         else:
             print('Mass is not conserved. Check!')
             #raise RuntimeError('Mass is not conserved. Check!')
+
             
         qc_tend_out = (cld_dsd_maf - cld_dsd_mbf)/dt   # unit: kg m-3 s-1
         nc_tend_out = (cld_dsd_naf - cld_dsd_nbf)/dt   # unit: m-3 s-1
