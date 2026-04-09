@@ -7,12 +7,11 @@ def compute_coll_SDM(numbin, dt, dmdlnr_bin, dndlnr_bin, m_to_n_factors):
     LATENT_DIM = 3
     POLY_ORDER = 2
     NBIN = numbin
-    WEIGHT_DIR = "./aesindy_weights_pysdm.pth"
-    M_SCALE = 0.01046717958952477           # units: kg m^-3 (lnr)^-1
-    ZLIM = np.load("./zlim_data.npz")['zlim']
-    # override mass limits
-    ZLIM[-1, 0] = 0.0
-    ZLIM[-1, 1] = np.inf
+    WEIGHT_DIR = "./ftorch_weights/erfAll_aesindy_weights.pth"
+    M_SCALE = 0.01589495           # units: kg m^-3
+    # ZLIM = np.load("./zlim_data.npz")['zlim']
+    # ZLIM[-1, 0] = 0.0
+    # ZLIM[-1, 1] = np.inf
 
     # set up the model: should be done only once and not need to be updated
     # on sequential calls to computation
@@ -35,7 +34,7 @@ def compute_coll_SDM(numbin, dt, dmdlnr_bin, dndlnr_bin, m_to_n_factors):
     z_bf[LATENT_DIM] = M_scaled
 
     # step forward in time
-    z_af = simulate(z_bf, [0, dt], model.dzdt, ZLIM)
+    z_af = simulate(z_bf, [0, dt], model.dzdt)
 
     # decode; enforce mass conservation exactly, i.e. ignore dM/dt or latents[-1]
     x_scaled_af = model.decoder(torch.Tensor(z_af[-1, :-1])).detach().numpy()

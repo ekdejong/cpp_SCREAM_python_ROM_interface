@@ -38,7 +38,7 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
     """
     # CONSTANTS
     # radius bins
-    NUMBIN = 63
+    NUMBIN = 64
     NUMEDG = NUMBIN + 1
     EDGR = 5e-3                    # unit: m
     EDGL = 1e-6                    # unit: m
@@ -110,17 +110,20 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
             import matplotlib.pyplot as plt
             import matplotlib.gridspec as gridspec
 
+            # compute reconstructions
+            recon_dmdlnr_bin, recon_dndlnr_bin = py_ROM.compute_coll_SDM(NUMBIN, 0.0001, dmdlnr_bin[:], dndlnr_bin[:], M_TO_N_FACTORS)
+
             ### gamma PSD
             log10d  = np.linspace(start=-9,stop=-1,num=100,endpoint=True)
             d_plt   = 10.0**log10d
 
             gamma_psdc   = gamma_distribution(d_plt, N0c, lambdac, muc)          # unit: m-4-u
-            dum_NDdDc    = gamma_psdc[:]*d_plt[:]                                # unit: m-3
-            dum_massDc   = dum_NDdDc[:]*(np.pi/6.0*d_plt[:]**3*RHOW)             # unit: kg/m3. Assumption: spherical
+            dum_dNdlnrc    = gamma_psdc[:]*d_plt[:]                                # unit: m-3
+            dum_dMdlnrDc   = dum_dNdlnrc[:]*(np.pi/6.0*d_plt[:]**3*RHOW)             # unit: kg/m3. Assumption: spherical
 
             gamma_psdr   = gamma_distribution(d_plt, N0r, lambdar, mur)          # unit: m-4-u
-            dum_NDdDr    = gamma_psdr[:]*d_plt[:]                                # unit: m-3
-            dum_massDr   = dum_NDdDr[:]*(np.pi/6.0*d_plt[:]**3*RHOW)          # unit: kg/m3. Assumption: spherical
+            dum_dNdlnrr    = gamma_psdr[:]*d_plt[:]                                # unit: m-3
+            dum_dMdlnrDr   = dum_dNdlnrr[:]*(np.pi/6.0*d_plt[:]**3*RHOW)          # unit: kg/m3. Assumption: spherical
 
             dpi = 300
             fig = plt.figure(figsize=(1800/dpi,1200/dpi), dpi=dpi) ##,constrained_layout=True)
@@ -138,10 +141,10 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
             ax[-1].set_xlabel('Diameter [\u03bcm]', fontsize=10)
             ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
             ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
-            ax[-1].plot(d_plt*1.0e6,(dum_NDdDc+dum_NDdDr)*1.0e-6,alpha=0.8,lw=1,linestyle='-',c='k',)
+            ax[-1].plot(d_plt*1.0e6,(dum_dNdlnrc+dum_dNdlnrr)*1.0e-6,alpha=0.8,lw=1,linestyle='-',c='k',)
             ax[-1].step((R_EDG[:-1] + R_EDG[1:])*1e6, dndlnr_bin*1.0e-6, lw=1, linestyle='-', c='r')
-            ax[-1].plot(d_plt*1.0e6,(dum_NDdDc)*1.0e-6,alpha=0.8,lw=1,linestyle='--',c='b',)
-            ax[-1].plot(d_plt*1.0e6,(dum_NDdDr)*1.0e-6,alpha=0.8,lw=1,linestyle='--',c='g',)
+            ax[-1].plot(d_plt*1.0e6,(dum_dNdlnrc)*1.0e-6,alpha=0.8,lw=1,linestyle='--',c='b',)
+            ax[-1].plot(d_plt*1.0e6,(dum_dNdlnrr)*1.0e-6,alpha=0.8,lw=1,linestyle='--',c='g',)
             ax[-1].legend(['total', 'binned', 'cloud', 'rain'])
 
 
@@ -154,10 +157,10 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
             ax[-1].set_xlabel('Diameter [\u03bcm]', fontsize=10)
             ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
             ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
-            ax[-1].plot(d_plt*1.0e6,(dum_massDc+dum_massDr)*1.0e-3,alpha=0.8,lw=1,linestyle='-',c='k',)
+            ax[-1].plot(d_plt*1.0e6,(dum_dMdlnrDc+dum_dMdlnrDr)*1.0e-3,alpha=0.8,lw=1,linestyle='-',c='k',)
             ax[-1].step((R_EDG[:-1] + R_EDG[1:])*1.0e6, dmdlnr_bin*1.0e-3, lw=1, linestyle='-', c='r',)
-            ax[-1].plot(d_plt*1.0e6,(dum_massDc)*1.0e-3,alpha=0.8,lw=1,linestyle='--',c='b',)
-            ax[-1].plot(d_plt*1.0e6,(dum_massDr)*1.0e-3,alpha=0.8,lw=1,linestyle='--',c='g',)
+            ax[-1].plot(d_plt*1.0e6,(dum_dMdlnrDc)*1.0e-3,alpha=0.8,lw=1,linestyle='--',c='b',)
+            ax[-1].plot(d_plt*1.0e6,(dum_dMdlnrDr)*1.0e-3,alpha=0.8,lw=1,linestyle='--',c='g',)
 
             ax.append(fig.add_subplot(spec[0, 1]))
             # ax[-1].set_ylim(0,20)
@@ -168,8 +171,9 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
             ax[-1].set_xlabel('Diameter [\u03bcm]', fontsize=10)
             ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
             ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
-            ax[-1].step(2*R_EDG[:-1]*1e6, new_dndlnr_bin*1.0e-6, lw=1, linestyle='-', c='r')
-            ax[-1].legend(['after dt'])
+            ax[-1].step(2*R_EDG[:-1]*1e6, recon_dndlnr_bin*1.0e-6, lw=1, linestyle='-', c='r')
+            ax[-1].step(2*R_EDG[:-1]*1e6, new_dndlnr_bin*1.0e-6, lw=1, linestyle='-', c='orange')
+            ax[-1].legend(['before dt (reconstruction)', 'after dt'])
 
             ax.append(fig.add_subplot(spec[1, 1]))
             # ax[-1].set_ylim(0,2.0e-7)
@@ -180,8 +184,9 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
             ax[-1].set_xlabel('Diameter [\u03bcm]', fontsize=10)
             ax[-1].tick_params(axis='y', rotation=0,labelsize=7)
             ax[-1].tick_params(axis='x', rotation=0,labelsize=7)
-            ax[-1].step(2*R_EDG[:-1]*1.0e6, new_dmdlnr_bin*1.0e-3, lw=1, linestyle='-', c='r',)
-            ax[-1].legend(['after dt'])
+            ax[-1].step(2*R_EDG[:-1]*1e6, recon_dmdlnr_bin*1.0e-3, lw=1, linestyle='-', c='r')
+            ax[-1].step(2*R_EDG[:-1]*1.0e6, new_dmdlnr_bin*1.0e-3, lw=1, linestyle='-', c='orange',)
+            ax[-1].legend(['before dt (reconstruction)', 'after dt'])
 
             plt.savefig('PSD_total_comparison.png')
             plt.close()
@@ -213,9 +218,9 @@ def ROM_interface(qc_in, nc_in, qr_in, nr_in, muc_in, mur_in, qsmall):
         else:
             raise RuntimeError(f'Mass is not conserved. Check! {mass_noncons:.5f}% error')
 
-            
-        qc_tend_out = (cld_dsd_maf - cld_dsd_mbf)/dt   # unit: kg m-3 s-1
-        nc_tend_out = (cld_dsd_naf - cld_dsd_nbf)/dt   # unit: m-3 s-1
+        # Tendencies: qc, nc must be decreasing; qr must be increasing
+        qc_tend_out = np.min((cld_dsd_maf - cld_dsd_mbf), 0)/dt   # unit: kg m-3 s-1
+        nc_tend_out = np.min((cld_dsd_naf - cld_dsd_nbf), 0)/dt   # unit: m-3 s-1
         qr_tend_out = -qc_tend_out        # Enforce mass conservation exactly in bulk quantities
         nr_tend_out = (rain_dsd_naf - rain_dsd_nbf)/dt # unit: m-3 s-1
 
